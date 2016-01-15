@@ -1,6 +1,5 @@
 #!/usr/bin/env bash
 set -o pipefail
-set -E
 
 # Set defaults based on what's available
 [ -n "$TAIL" ] || {
@@ -22,17 +21,26 @@ function examine {
   STATUS=$?
   echo $STATUS > $2.status
   {
-    [ -e $3.stderr ] && ($DIFF $2.stderr $3.stderr > $2.stderr.diff || $TAIL $2.stderr.diff);
+    rm -f $2.compile.*
+    [ -e $3.stderr ] && ($DIFF $2.stderr $3.stderr > $2.stderr.diff || $TAIL $2.stderr.diff)
   } || {
-    [ -e $3.stdout ] && ($DIFF $2.stdout $3.stdout > $2.stdout.diff || $TAIL $2.stdout.diff);
+    rm -f $2.stderr.diff
+    [ -e $3.stdout ] && ($DIFF $2.stdout $3.stdout > $2.stdout.diff || $TAIL $2.stdout.diff)
   } || {
-    [ -e $2.gen.stdout ] && ($DIFF $2.stdout $2.gen.stdout > $2.gen.stdout.diff || $TAIL $2.gen.stdout.diff);
+    rm -f $2.stdout.diff
+    [ -e $2.gen.stdout ] && ($DIFF $2.stdout $2.gen.stdout > $2.gen.stdout.diff || $TAIL $2.gen.stdout.diff)
   } || {
-    [ -e $2.gen.stderr ] && ($DIFF $2.stderr $2.gen.stderr > $2.gen.stderr.diff || $TAIL $2.gen.stderr.diff);
+    rm -f $2.gen.stdout.diff
+    [ -e $2.gen.stderr ] && ($DIFF $2.stderr $2.gen.stderr > $2.gen.stderr.diff || $TAIL $2.gen.stderr.diff)
   } || {
-    [ -e $2.gen.status ] && ($DIFF $2.status $2.gen.status > $2.gen.status || $TAIL $2.gen.status.diff);
+    rm -f $2.gen.stderr.diff
+    [ -e $2.gen.status ] && ($DIFF $2.status $2.gen.status > $2.gen.status || $TAIL $2.gen.status.diff)
   } || {
-    $DIFF $2.status `[ -e $3.status ] && echo $3.status || echo /tmp/zero` > $2.status.diff || $TAIL $2.status.diff
+    rm -f $2.gen.status.diff
+    $DIFF $2.status `[ -e $3.status ] && echo $3.status || echo /tmp/zero` > $2.status.diff || {
+      $TAIL $2.status.diff
+      false
+    }
   }
 }
 
@@ -42,9 +50,11 @@ function test_file {
   [ -z "$COMPILE" ] && TARGET_EXT=$SRC_EXT
   file=`echo $1 | sed s/$SRC_EXT'$'/$TARGET_EXT/`
   lfile=`basename $file`
-  [ -z "$COMPILE" ] && cp $file $lfile || {
-    examine "$COMPILE $1" $lfile.compile $file.compile && [ $STATUS -eq 0 ];
-  } && examine "$INTERPRETER ./$lfile" $lfile $file 
+  {
+    [ -z "$COMPILE" ] && cp $file $lfile || {
+      examine "$COMPILE $1" $lfile.compile $file.compile && [ $STATUS -eq 0 ];
+    } && examine "$INTERPRETER ./$lfile" $lfile $file
+  } || echo
 }
 
 # Should we test this file/directory?
@@ -73,18 +83,15 @@ echo $TOP | grep tests >/dev/null || { echo No test directory found; exit 1; }
 TESTDIR=`echo $TOP | sed 's/\(.*\/tests\).*$/\1/'`
 cd $TESTDIR/.. 
 rm -rf test_build || exit 1
-mkdir test_build
-cd test_build
+mkdir test_build; cd test_build
 echo 0 > /tmp/zero
 
 # Always write a summary of what happened
 function finish {
-  find . -type f \! -name '*.diff' -delete
-  TOTAL=`find . -type f | wc -l`
-  find . -type f -empty -exec rm {} \;
-  FAILED=`find . -type f | wc -l`
-  echo; echo FAILED $FAILED/$TOTAL TESTS | tee INFO
-  echo >> INFO
+  TOTAL=`find . -type f -name '*.diff' | wc -l`
+  find . -type f -empty -delete
+  FAILED=`find . -type f -name '*.diff' | wc -l`
+  echo; echo FAILED $FAILED/$TOTAL TESTS | tee INFO; echo >> INFO
   find -s . -type f -name '*.diff' -exec $TAIL {} \; >> INFO
 }
 trap 'finish; kill -HUP 0' INT
